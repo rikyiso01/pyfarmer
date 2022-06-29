@@ -3,6 +3,7 @@ from pyfarmer import farm
 
 def main(ip: str) -> None:
     print(ip, flush=True)
+    print("A" * 31 + "=")
 
 
 if __name__ == "__main__":

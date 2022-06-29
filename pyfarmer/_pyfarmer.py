@@ -18,7 +18,17 @@ def farm(function: Callable[[str], Any], file: str) -> None:
         assert IP is not None
         function(IP)
     else:
-        exit(run([join(dirname(__file__), "_client.py"), file, *argv[1:]]).returncode)
+        exit(
+            run(
+                [
+                    join(dirname(__file__), "_client.py"),
+                    "--interpreter",
+                    "python3",
+                    file,
+                    *argv[1:],
+                ]
+            ).returncode
+        )
 
 
 def submit_flag(flag: str) -> None:

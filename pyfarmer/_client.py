@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 
-from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, Namespace
-from binascii import crc32
-from itertools import count
-from json import dumps, loads
-from logging import DEBUG, basicConfig, critical, error, info, warning
-from random import choice
-from re import fullmatch, compile, Pattern
-from os.path import basename, isfile, abspath
-from subprocess import PIPE, STDOUT, Popen, TimeoutExpired
-from threading import Event, RLock, Thread
-from time import time
-from os import environ
-from typing import IO, Any
-from collections.abc import Generator, Iterable
+import sys
+
+assert sys.version_info >= (3, 4), "Python < 3.4 is not supported"
+
+import argparse
+import binascii
+import itertools
+import json
+import logging
+import os
+import random
+import re
+import stat
+import subprocess
+import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from math import ceil
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+
+
+os_windows = os.name == "nt"
 
 
 HEADER = r"""
@@ -61,9 +66,12 @@ BRIGHT_COLORS = [
 ]
 
 
-def highlight(text: str, style: list[Style] | None = None) -> str:
+def highlight(text, style=None):
+    if os_windows:
+        return text
+
     if style is None:
-        style = [Style.BOLD, choice(BRIGHT_COLORS)]
+        style = [Style.BOLD, random.choice(BRIGHT_COLORS)]
     return (
         "\033[{}m".format(";".join(str(item.value) for item in style))
         + text
@@ -74,13 +82,13 @@ def highlight(text: str, style: list[Style] | None = None) -> str:
 log_format = "%(asctime)s {} %(message)s".format(
     highlight("%(levelname)s", [Style.FG_YELLOW])
 )
-basicConfig(format=log_format, datefmt="%H:%M:%S", level=DEBUG)
+logging.basicConfig(format=log_format, datefmt="%H:%M:%S", level=logging.DEBUG)
 
 
 def parse_args():
-    parser = ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Run a sploit on all teams in a loop",
-        formatter_class=ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
@@ -149,7 +157,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def fix_args(args: Namespace):
+def fix_args(args):
     check_sploit(args)
 
     if "://" not in args.server_url:
@@ -157,7 +165,7 @@ def fix_args(args: Namespace):
 
     if args.distribute is not None:
         valid = False
-        match = fullmatch(r"(\d+)/(\d+)", args.distribute)
+        match = re.fullmatch(r"(\d+)/(\d+)", args.distribute)
         if match is not None:
             k, n = (int(match.group(1)), int(match.group(2)))
             if n >= 2 and 1 <= k <= n:
@@ -170,10 +178,88 @@ def fix_args(args: Namespace):
             )
 
 
-def check_sploit(args: Namespace) -> None:
-    path: str = args.sploit
-    if not isfile(path):
+SCRIPT_EXTENSIONS = {
+    ".pl": "perl",
+    ".py": "python",
+    ".rb": "ruby",
+}
+
+
+class InvalidSploitError(Exception):
+    pass
+
+
+def check_sploit(args):
+    path = args.sploit
+    if not os.path.isfile(path):
         raise ValueError("No such file: {}".format(path))
+
+    extension = os.path.splitext(path)[1].lower()
+    is_script = extension in SCRIPT_EXTENSIONS
+    if is_script:
+        with open(path, "r", errors="ignore") as f:
+            source = f.read()
+        errors = []
+
+        if errors:
+            for message in errors:
+                logging.error(message)
+            raise InvalidSploitError("Sploit won't be run because of validation errors")
+
+        if os_windows and args.interpreter is None:
+            args.interpreter = SCRIPT_EXTENSIONS[extension]
+            logging.info("Using interpreter `{}`".format(args.interpreter))
+
+    if not os_windows:
+        file_mode = os.stat(path).st_mode
+        # TODO: May be check the owner and other X flags properly?
+        if not file_mode & stat.S_IXUSR:
+            if is_script:
+                logging.info("Setting the executable bit on `{}`".format(path))
+                os.chmod(path, file_mode | stat.S_IXUSR)
+            else:
+                raise InvalidSploitError(
+                    "The provided file doesn't appear to be executable"
+                )
+
+
+if os_windows:
+    # By default, Ctrl+C does not work on Windows if we spawn subprocesses.
+    # Here we fix that using WinApi. See https://stackoverflow.com/a/43095532
+
+    import signal
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    # BOOL WINAPI HandlerRoutine(
+    #   _In_ DWORD dwCtrlType
+    # );
+    PHANDLER_ROUTINE = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+    win_ignore_ctrl_c = PHANDLER_ROUTINE()  # = NULL
+
+    def _errcheck_bool(result, _, args):
+        if not result:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return args
+
+    # BOOL WINAPI SetConsoleCtrlHandler(
+    #   _In_opt_ PHANDLER_ROUTINE HandlerRoutine,
+    #   _In_     BOOL             Add
+    # );
+    kernel32.SetConsoleCtrlHandler.errcheck = _errcheck_bool
+    kernel32.SetConsoleCtrlHandler.argtypes = (PHANDLER_ROUTINE, wintypes.BOOL)
+
+    @PHANDLER_ROUTINE
+    def win_ctrl_handler(dwCtrlType):
+        if dwCtrlType == signal.CTRL_C_EVENT:
+            kernel32.SetConsoleCtrlHandler(win_ignore_ctrl_c, True)
+            shutdown()
+        return False
+
+    kernel32.SetConsoleCtrlHandler(win_ctrl_handler, True)
 
 
 class APIException(Exception):
@@ -183,7 +269,7 @@ class APIException(Exception):
 SERVER_TIMEOUT = 5
 
 
-def get_config(args: Namespace) -> Any:
+def get_config(args):
     req = Request(urljoin(args.server_url, "/api/get_config"))
     if args.token is not None:
         req.add_header("X-Token", args.token)
@@ -191,14 +277,14 @@ def get_config(args: Namespace) -> Any:
         if conn.status != 200:
             raise APIException(conn.read())
 
-        return loads(conn.read().decode())
+        return json.loads(conn.read().decode())
 
 
-def post_flags(args: Namespace, flags: list[dict[str, str]]) -> None:
+def post_flags(args, flags):
     if args.alias is not None:
         sploit_name = args.alias
     else:
-        sploit_name = basename(args.sploit)
+        sploit_name = os.path.basename(args.sploit)
 
     data = [
         {"flag": item["flag"], "sploit": sploit_name, "team": item["team"]}
@@ -209,20 +295,20 @@ def post_flags(args: Namespace, flags: list[dict[str, str]]) -> None:
     req.add_header("Content-Type", "application/json")
     if args.token is not None:
         req.add_header("X-Token", args.token)
-    with urlopen(req, data=dumps(data).encode(), timeout=SERVER_TIMEOUT) as conn:
+    with urlopen(req, data=json.dumps(data).encode(), timeout=SERVER_TIMEOUT) as conn:
         if conn.status != 200:
             raise APIException(conn.read())
 
 
-exit_event = Event()
+exit_event = threading.Event()
 
 
-def once_in_a_period(period: float) -> Generator[int, None, None]:
-    for iter_no in count(1):
-        start_time = time()
+def once_in_a_period(period):
+    for iter_no in itertools.count(1):
+        start_time = time.time()
         yield iter_no
 
-        time_spent = time() - start_time
+        time_spent = time.time() - start_time
         if period > time_spent:
             exit_event.wait(period - time_spent)
         if exit_event.is_set():
@@ -238,27 +324,27 @@ class FlagStorage:
     """
 
     def __init__(self):
-        self._flags_seen: set[str] = set()
-        self._queue: list[dict[str, str]] = []
-        self._lock = RLock()
+        self._flags_seen = set()
+        self._queue = []
+        self._lock = threading.RLock()
 
-    def add(self, flags: Iterable[str], team_name: str):
+    def add(self, flags, team_name):
         with self._lock:
             for item in flags:
                 if item not in self._flags_seen:
                     self._flags_seen.add(item)
                     self._queue.append({"flag": item, "team": team_name})
 
-    def pick_flags(self) -> list[dict[str, str]]:
+    def pick_flags(self):
         with self._lock:
             return self._queue[:]
 
-    def mark_as_sent(self, count: int) -> None:
+    def mark_as_sent(self, count):
         with self._lock:
             self._queue = self._queue[count:]
 
     @property
-    def queue_size(self) -> int:
+    def queue_size(self):
         with self._lock:
             return len(self._queue)
 
@@ -269,7 +355,7 @@ flag_storage = FlagStorage()
 POST_PERIOD = 5
 
 
-def run_post_loop(args: Namespace) -> None:
+def run_post_loop(args):
     try:
         for _ in once_in_a_period(POST_PERIOD):
             flags_to_post = flag_storage.pick_flags()
@@ -279,25 +365,25 @@ def run_post_loop(args: Namespace) -> None:
                     post_flags(args, flags_to_post)
 
                     flag_storage.mark_as_sent(len(flags_to_post))
-                    info(
+                    logging.info(
                         "{} flags posted to the server ({} in the queue)".format(
                             len(flags_to_post), flag_storage.queue_size
                         )
                     )
                 except Exception as e:
-                    error("Can't post flags to the server: {}".format(repr(e)))
-                    info("The flags will be posted next time")
+                    logging.error("Can't post flags to the server: {}".format(repr(e)))
+                    logging.info("The flags will be posted next time")
     except Exception as e:
-        critical("Posting loop died: {}".format(repr(e)))
+        logging.critical("Posting loop died: {}".format(repr(e)))
         shutdown()
 
 
-display_output_lock = RLock()
+display_output_lock = threading.RLock()
 
 
-def display_sploit_output(team_name: str, output_lines: list[str]) -> None:
+def display_sploit_output(team_name, output_lines):
     if not output_lines:
-        info("{}: No output from the sploit".format(team_name))
+        logging.info("{}: No output from the sploit".format(team_name))
         return
 
     prefix = highlight(team_name + ": ")
@@ -305,16 +391,10 @@ def display_sploit_output(team_name: str, output_lines: list[str]) -> None:
         print("\n" + "\n".join(prefix + line.rstrip() for line in output_lines) + "\n")
 
 
-def process_sploit_output(
-    stream: IO[bytes],
-    args: Namespace,
-    team_name: str,
-    flag_format: Pattern[str],
-    attack_no: int,
-) -> None:
+def process_sploit_output(stream, args, team_name, flag_format, attack_no):
     try:
-        output_lines: list[str] = []
-        instance_flags: set[str] = set()
+        output_lines = []
+        instance_flags = set()
 
         while True:
             line = stream.readline()
@@ -333,13 +413,13 @@ def process_sploit_output(
 
             display_sploit_output(team_name, output_lines)
             if instance_flags:
-                info(
+                logging.info(
                     'Got {} flags from "{}": {}'.format(
                         len(instance_flags), team_name, instance_flags
                     )
                 )
     except Exception as e:
-        error("Failed to process sploit output: {}".format(repr(e)))
+        logging.error("Failed to process sploit output: {}".format(repr(e)))
 
 
 class InstanceStorage:
@@ -352,18 +432,18 @@ class InstanceStorage:
 
     def __init__(self):
         self._counter = 0
-        self.instances: dict[int, Popen[bytes]] = {}
+        self.instances = {}
 
         self.n_completed = 0
         self.n_killed = 0
 
-    def register_start(self, process: Popen[bytes]):
+    def register_start(self, process):
         instance_id = self._counter
         self.instances[instance_id] = process
         self._counter += 1
         return instance_id
 
-    def register_stop(self, instance_id: int, was_killed: bool):
+    def register_stop(self, instance_id, was_killed):
         del self.instances[instance_id]
 
         self.n_completed += 1
@@ -371,55 +451,49 @@ class InstanceStorage:
 
 
 instance_storage = InstanceStorage()
-instance_lock = RLock()
+instance_lock = threading.RLock()
 
 
-def launch_sploit(
-    args: Namespace,
-    team_name: str,
-    team_addr: str,
-    attack_no: int,
-    flag_format: Pattern[str],
-):
+def launch_sploit(args, team_name, team_addr, attack_no, flag_format):
     # For sploits written in Python, this env variable forces the interpreter to flush
     # stdout and stderr after each newline. Note that this is not default behavior
     # if the sploit's output is redirected to a pipe.
-    env = environ.copy()
+    env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    command = ["/usr/bin/env", "python3", abspath(args.sploit)]
+    command = [os.path.abspath(args.sploit)]
     if args.interpreter is not None:
         command = [args.interpreter] + command
     if team_addr is not None:
         command.append(team_addr)
-    proc = Popen(
+    need_close_fds = not os_windows
+
+    if os_windows:
+        # On Windows, we block Ctrl+C handling, spawn the process, and
+        # then recover the handler. This is the only way to make Ctrl+C
+        # intercepted by us instead of our child processes.
+        kernel32.SetConsoleCtrlHandler(win_ignore_ctrl_c, True)
+    proc = subprocess.Popen(
         command,
-        stdout=PIPE,
-        stderr=STDOUT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         bufsize=1,
+        close_fds=need_close_fds,
         env=env,
     )
+    if os_windows:
+        kernel32.SetConsoleCtrlHandler(win_ignore_ctrl_c, False)
 
-    out = proc.stdout
-    assert out is not None
-
-    Thread(
+    threading.Thread(
         target=lambda: process_sploit_output(
-            out, args, team_name, flag_format, attack_no
+            proc.stdout, args, team_name, flag_format, attack_no
         )
     ).start()
 
     return proc, instance_storage.register_start(proc)
 
 
-def run_sploit(
-    args: Namespace,
-    team_name: str,
-    team_addr: str,
-    attack_no: int,
-    max_runtime: float,
-    flag_format: Pattern[str],
-):
+def run_sploit(args, team_name, team_addr, attack_no, max_runtime, flag_format):
     try:
         with instance_lock:
             if exit_event.is_set():
@@ -430,27 +504,29 @@ def run_sploit(
             )
     except Exception as e:
         if isinstance(e, FileNotFoundError):
-            error("Sploit file or the interpreter for it not found: {}".format(repr(e)))
-            error(
+            logging.error(
+                "Sploit file or the interpreter for it not found: {}".format(repr(e))
+            )
+            logging.error(
                 "Check presence of the sploit file and the shebang (use {} for compatibility)".format(
                     highlight("#!/usr/bin/env ...", [Style.FG_GREEN])
                 )
             )
         else:
-            error("Failed to run sploit: {}".format(repr(e)))
+            logging.error("Failed to run sploit: {}".format(repr(e)))
 
         if attack_no == 1:
             shutdown()
-        exit(1)
+        return
 
     try:
         try:
             proc.wait(timeout=max_runtime)
             need_kill = False
-        except TimeoutExpired:
+        except subprocess.TimeoutExpired:
             need_kill = True
             if attack_no <= args.verbose_attacks:
-                warning(
+                logging.warning(
                     'Sploit for "{}" ({}) ran out of time'.format(team_name, team_addr)
                 )
 
@@ -460,18 +536,16 @@ def run_sploit(
 
             instance_storage.register_stop(instance_id, need_kill)
     except Exception as e:
-        error("Failed to finish sploit: {}".format(repr(e)))
+        logging.error("Failed to finish sploit: {}".format(repr(e)))
 
 
-def show_time_limit_info(
-    args: Namespace, config: dict[str, Any], max_runtime: float, attack_no: int
-):
+def show_time_limit_info(args, config, max_runtime, attack_no):
     if attack_no == 1:
         min_attack_period = (
             config["FLAG_LIFETIME"] - config["SUBMIT_PERIOD"] - POST_PERIOD
         )
         if args.attack_period >= min_attack_period:
-            warning(
+            logging.warning(
                 "--attack-period should be < {:.1f} sec, "
                 "otherwise the sploit will not have time "
                 "to catch flags for each round before their expiration".format(
@@ -479,11 +553,11 @@ def show_time_limit_info(
                 )
             )
 
-    info("Time limit for a sploit instance: {:.1f} sec".format(max_runtime))
+    logging.info("Time limit for a sploit instance: {:.1f} sec".format(max_runtime))
     with instance_lock:
         if instance_storage.n_completed > 0:
             # TODO: Maybe better for 10 last attacks
-            info(
+            logging.info(
                 "Total {:.1f}% of instances ran out of time".format(
                     float(instance_storage.n_killed)
                     / instance_storage.n_completed
@@ -495,7 +569,7 @@ def show_time_limit_info(
 PRINTED_TEAM_NAMES = 5
 
 
-def get_target_teams(args: Namespace, teams: dict[str, str], attack_no: int):
+def get_target_teams(args, teams, attack_no):
     if args.not_per_team:
         return {"*": None}
 
@@ -504,7 +578,7 @@ def get_target_teams(args: Namespace, teams: dict[str, str], attack_no: int):
         teams = {
             name: addr
             for name, addr in teams.items()
-            if crc32(addr.encode()) % n == k - 1
+            if binascii.crc32(addr.encode()) % n == k - 1
         }
 
     if teams:
@@ -512,13 +586,13 @@ def get_target_teams(args: Namespace, teams: dict[str, str], attack_no: int):
             names = sorted(teams.keys())
             if len(names) > PRINTED_TEAM_NAMES:
                 names = names[:PRINTED_TEAM_NAMES] + ["..."]
-            info(
+            logging.info(
                 "Sploit will be run on {} teams: {}".format(
                     len(teams), ", ".join(names)
                 )
             )
     else:
-        error(
+        logging.error(
             'There is no teams to attack for this farm client, fix "TEAMS" value '
             "in your server config or the usage of --distribute"
         )
@@ -526,45 +600,42 @@ def get_target_teams(args: Namespace, teams: dict[str, str], attack_no: int):
     return teams
 
 
-def main(args: Namespace):
+def main(args):
     try:
         fix_args(args)
-    except ValueError as e:
-        critical(str(e))
-        exit(1)
+    except (ValueError, InvalidSploitError) as e:
+        logging.critical(str(e))
+        return
 
     print(highlight(HEADER))
-    info("Connecting to the farm server at {}".format(args.server_url))
+    logging.info("Connecting to the farm server at {}".format(args.server_url))
 
-    Thread(target=lambda: run_post_loop(args)).start()
+    threading.Thread(target=lambda: run_post_loop(args)).start()
 
-    config: Any = None
-    flag_format = None
+    config = flag_format = None
     pool = ThreadPoolExecutor(max_workers=args.pool_size)
     for attack_no in once_in_a_period(args.attack_period):
         try:
             config = get_config(args)
-            flag_format = compile(config["FLAG_FORMAT"])
+            flag_format = re.compile(config["FLAG_FORMAT"])
         except Exception as e:
-            error("Can't get config from the server: {}".format(repr(e)))
+            logging.error("Can't get config from the server: {}".format(repr(e)))
             if attack_no == 1:
-                exit(1)
-            info("Using the old config")
+                return
+            logging.info("Using the old config")
         teams = get_target_teams(args, config["TEAMS"], attack_no)
         if not teams:
             if attack_no == 1:
-                exit(1)
+                return
             continue
 
         print()
-        info("Launching an attack #{}".format(attack_no))
+        logging.info("Launching an attack #{}".format(attack_no))
 
         max_runtime = args.attack_period / ceil(len(teams) / args.pool_size)
         show_time_limit_info(args, config, max_runtime, attack_no)
 
         for team_name, team_addr in teams.items():
-            assert flag_format is not None
-            assert team_addr is not None
             pool.submit(
                 run_sploit,
                 args,
@@ -589,6 +660,6 @@ if __name__ == "__main__":
     try:
         main(parse_args())
     except KeyboardInterrupt:
-        info("Got Ctrl+C, shutting down")
+        logging.info("Got Ctrl+C, shutting down")
     finally:
         shutdown()
