@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "pyfarmer"
-version = "0.1.0"
+version = "0.1.2"
 description = "A farmer for your flag farm"
 authors = ["rikyiso01 <31405152+rikyiso01@users.noreply.github.com>"]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-requests = "^2.28.0"
+python = "^3.6"
+requests = "^2.25.1"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.1.2"
