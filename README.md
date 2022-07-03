@@ -2,7 +2,9 @@
 
 ## Introduction
 
-> A farmer for your CTF farm
+> A farmer for your [Destructive Farm](https://github.com/DestructiveVoice/DestructiveFarm)
+>
+> <img src="https://i.kym-cdn.com/entries/icons/original/000/028/021/work.jpg" style="zoom: 50%;" />
 
 ## Code Samples
 
@@ -32,6 +34,5 @@
 > Install locally with:
 >
 > ```bash
-> pip install git+ssh://git@github.com/rikyiso01/pyfarmer.git@latest
+> pip install pyfarmer
 > ```
->
