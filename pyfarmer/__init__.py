@@ -4,6 +4,7 @@ from ._pyfarmer import (
     get_ids,
     random_string,
     print_exception,
+    ip as IP,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "print_exception",
     "random_string",
     "print_exception",
+    "IP",
 ]

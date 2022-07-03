@@ -5,7 +5,7 @@ description = "A farmer for your flag farm"
 authors = ["rikyiso01 <31405152+rikyiso01@users.noreply.github.com>"]
 
 [tool.poetry.dependencies]
-python = "^3.6"
+python = "^3.7"
 requests = "^2.25.1"
 
 [tool.poetry.dev-dependencies]
@@ -23,6 +23,9 @@ requests = "^2.22.0"
 "themis.finals.attack.result" = "^1.3.0"
 urllib3 = "^1.26.5"
 Werkzeug = "^0.16.0"
+tox = "^3.25.1"
+tox-pyenv = "^1.1.0"
+tox-poetry = "^0.4.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
@@ -30,4 +33,18 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
-asyncio_mode='auto'
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+envlist = py37,py310
+isolated_build=true
+
+[gh-actions]
+python =
+    3.7: python3
+    3.10: python3
+
+[testenv]
+commands = pytest
+"""

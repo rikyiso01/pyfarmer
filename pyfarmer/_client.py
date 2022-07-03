@@ -2,7 +2,7 @@
 
 import sys
 
-assert sys.version_info >= (3, 4), "Python < 3.4 is not supported"
+assert sys.version_info >= (3, 4), 'Python < 3.4 is not supported'
 
 import argparse
 import binascii
@@ -23,10 +23,10 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 
-os_windows = os.name == "nt"
+os_windows = (os.name == 'nt')
 
 
-HEADER = r"""
+HEADER = r'''
  ____            _                   _   _             _____
 |  _ \  ___  ___| |_ _ __ _   _  ___| |_(_)_   _____  |  ___|_ _ _ __ _ __ ___
 | | | |/ _ \/ __| __| '__| | | |/ __| __| \ \ / / _ \ | |_ / _` | '__| '_ ` _ `
@@ -34,9 +34,7 @@ HEADER = r"""
 |____/ \___||___/\__|_|   \__,_|\___|\__|_| \_/ \___| |_|  \__,_|_|  |_| |_| |_
 
 Note that this software is highly destructive. Keep it away from children.
-"""[
-    1:
-]
+'''[1:]
 
 
 class Style(Enum):
@@ -57,13 +55,8 @@ class Style(Enum):
     FG_LIGHT_GRAY = 37
 
 
-BRIGHT_COLORS = [
-    Style.FG_RED,
-    Style.FG_GREEN,
-    Style.FG_BLUE,
-    Style.FG_MAGENTA,
-    Style.FG_CYAN,
-]
+BRIGHT_COLORS = [Style.FG_RED, Style.FG_GREEN, Style.FG_BLUE,
+                 Style.FG_MAGENTA, Style.FG_CYAN]
 
 
 def highlight(text, style=None):
@@ -72,87 +65,49 @@ def highlight(text, style=None):
 
     if style is None:
         style = [Style.BOLD, random.choice(BRIGHT_COLORS)]
-    return (
-        "\033[{}m".format(";".join(str(item.value) for item in style))
-        + text
-        + "\033[0m"
-    )
+    return '\033[{}m'.format(';'.join(str(item.value) for item in style)) + text + '\033[0m'
 
 
-log_format = "%(asctime)s {} %(message)s".format(
-    highlight("%(levelname)s", [Style.FG_YELLOW])
-)
-logging.basicConfig(format=log_format, datefmt="%H:%M:%S", level=logging.DEBUG)
+log_format = '%(asctime)s {} %(message)s'.format(highlight('%(levelname)s', [Style.FG_YELLOW]))
+logging.basicConfig(format=log_format, datefmt='%H:%M:%S', level=logging.DEBUG)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Run a sploit on all teams in a loop",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+    parser = argparse.ArgumentParser(description='Run a sploit on all teams in a loop',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument(
-        "sploit",
-        help="Sploit executable (should take a victim's host as the first argument)",
-    )
-    parser.add_argument(
-        "-u",
-        "--server-url",
-        metavar="URL",
-        default="http://farm.kolambda.com:5000",
-        help="Server URL",
-    )
-    parser.add_argument(
-        "-a", "--alias", metavar="ALIAS", default=None, help="Sploit alias"
-    )
-    parser.add_argument("--token", metavar="TOKEN", help="Farm authorization token")
-    parser.add_argument(
-        "--interpreter",
-        metavar="COMMAND",
-        help="Explicitly specify sploit interpreter (use on Windows, which doesn't "
-        "understand shebangs)",
-    )
+    parser.add_argument('sploit',
+                        help="Sploit executable (should take a victim's host as the first argument)")
+    parser.add_argument('-u', '--server-url', metavar='URL',
+                        default='http://farm.kolambda.com:5000',
+                        help='Server URL')
+    parser.add_argument('-a', '--alias', metavar='ALIAS',
+                        default=None,
+                        help='Sploit alias')
+    parser.add_argument('--token', metavar='TOKEN',
+                        help='Farm authorization token')
+    parser.add_argument('--interpreter', metavar='COMMAND',
+                        help='Explicitly specify sploit interpreter (use on Windows, which doesn\'t '
+                             'understand shebangs)')
 
-    parser.add_argument(
-        "--pool-size",
-        metavar="N",
-        type=int,
-        default=50,
-        help="Maximal number of concurrent sploit instances. "
-        "Too little value will make time limits for sploits smaller, "
-        "too big will eat all RAM on your computer",
-    )
-    parser.add_argument(
-        "--attack-period",
-        metavar="N",
-        type=float,
-        default=120,
-        help="Rerun the sploit on all teams each N seconds "
-        "Too little value will make time limits for sploits smaller, "
-        "too big will miss flags from some rounds",
-    )
+    parser.add_argument('--pool-size', metavar='N', type=int, default=50,
+                        help='Maximal number of concurrent sploit instances. '
+                             'Too little value will make time limits for sploits smaller, '
+                             'too big will eat all RAM on your computer')
+    parser.add_argument('--attack-period', metavar='N', type=float, default=120,
+                        help='Rerun the sploit on all teams each N seconds '
+                             'Too little value will make time limits for sploits smaller, '
+                             'too big will miss flags from some rounds')
 
-    parser.add_argument(
-        "-v",
-        "--verbose-attacks",
-        metavar="N",
-        type=int,
-        default=1,
-        help="Sploits' outputs and found flags will be shown for the N first attacks",
-    )
+    parser.add_argument('-v', '--verbose-attacks', metavar='N', type=int, default=1,
+                        help="Sploits' outputs and found flags will be shown for the N first attacks")
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--not-per-team",
-        action="store_true",
-        help="Run a single instance of the sploit instead of an instance per team",
-    )
-    group.add_argument(
-        "--distribute",
-        metavar="K/N",
-        help="Divide the team list to N parts (by address hash modulo N) "
-        "and run the sploits only on Kth part of it (K >= 1)",
-    )
+    group.add_argument('--not-per-team', action='store_true',
+                       help='Run a single instance of the sploit instead of an instance per team')
+    group.add_argument('--distribute', metavar='K/N',
+                       help='Divide the team list to N parts (by address hash modulo N) '
+                            'and run the sploits only on Kth part of it (K >= 1)')
 
     return parser.parse_args()
 
@@ -160,12 +115,12 @@ def parse_args():
 def fix_args(args):
     check_sploit(args)
 
-    if "://" not in args.server_url:
-        args.server_url = "http://" + args.server_url
+    if '://' not in args.server_url:
+        args.server_url = 'http://' + args.server_url
 
     if args.distribute is not None:
         valid = False
-        match = re.fullmatch(r"(\d+)/(\d+)", args.distribute)
+        match = re.fullmatch(r'(\d+)/(\d+)', args.distribute)
         if match is not None:
             k, n = (int(match.group(1)), int(match.group(2)))
             if n >= 2 and 1 <= k <= n:
@@ -173,16 +128,31 @@ def fix_args(args):
                 valid = True
 
         if not valid:
-            raise ValueError(
-                "Wrong syntax for --distribute, use --distribute K/N (N >= 2, 1 <= K <= N)"
-            )
+            raise ValueError('Wrong syntax for --distribute, use --distribute K/N (N >= 2, 1 <= K <= N)')
 
 
 SCRIPT_EXTENSIONS = {
-    ".pl": "perl",
-    ".py": "python",
-    ".rb": "ruby",
+    '.pl': 'perl',
+    '.py': 'python',
+    '.rb': 'ruby',
 }
+
+
+def check_script_source(source, interpreter):
+    errors = []
+    if not os_windows and not interpreter and source[:2] != '#!':
+        errors.append(
+            'Please use shebang (e.g. {}) as the first line of your script'.format(
+                highlight('#!/usr/bin/env python3', [Style.FG_GREEN])))
+    if re.search(r'flush[(=]', source) is None:
+        errors.append(
+            'Please print the newline and call {} each time after your sploit outputs flags. '
+            'In Python 3, you can use {}. '
+            'Otherwise, the flags may be lost (if the sploit process is killed) or '
+            'sent with a delay.'.format(
+                highlight('flush()', [Style.FG_RED]),
+                highlight('print(..., flush=True)', [Style.FG_GREEN])))
+    return errors
 
 
 class InvalidSploitError(Exception):
@@ -192,35 +162,33 @@ class InvalidSploitError(Exception):
 def check_sploit(args):
     path = args.sploit
     if not os.path.isfile(path):
-        raise ValueError("No such file: {}".format(path))
+        raise ValueError('No such file: {}'.format(path))
 
     extension = os.path.splitext(path)[1].lower()
     is_script = extension in SCRIPT_EXTENSIONS
     if is_script:
-        with open(path, "r", errors="ignore") as f:
+        with open(path, 'r', errors='ignore') as f:
             source = f.read()
-        errors = []
+        errors = check_script_source(source, args.interpreter)
 
         if errors:
             for message in errors:
                 logging.error(message)
-            raise InvalidSploitError("Sploit won't be run because of validation errors")
+            raise InvalidSploitError('Sploit won\'t be run because of validation errors')
 
         if os_windows and args.interpreter is None:
             args.interpreter = SCRIPT_EXTENSIONS[extension]
-            logging.info("Using interpreter `{}`".format(args.interpreter))
+            logging.info('Using interpreter `{}`'.format(args.interpreter))
 
     if not os_windows:
         file_mode = os.stat(path).st_mode
         # TODO: May be check the owner and other X flags properly?
         if not file_mode & stat.S_IXUSR:
             if is_script:
-                logging.info("Setting the executable bit on `{}`".format(path))
+                logging.info('Setting the executable bit on `{}`'.format(path))
                 os.chmod(path, file_mode | stat.S_IXUSR)
             else:
-                raise InvalidSploitError(
-                    "The provided file doesn't appear to be executable"
-                )
+                raise InvalidSploitError("The provided file doesn't appear to be executable")
 
 
 if os_windows:
@@ -270,9 +238,9 @@ SERVER_TIMEOUT = 5
 
 
 def get_config(args):
-    req = Request(urljoin(args.server_url, "/api/get_config"))
+    req = Request(urljoin(args.server_url, '/api/get_config'))
     if args.token is not None:
-        req.add_header("X-Token", args.token)
+        req.add_header('X-Token', args.token)
     with urlopen(req, timeout=SERVER_TIMEOUT) as conn:
         if conn.status != 200:
             raise APIException(conn.read())
@@ -285,16 +253,14 @@ def post_flags(args, flags):
         sploit_name = args.alias
     else:
         sploit_name = os.path.basename(args.sploit)
+        
+    data = [{'flag': item['flag'], 'sploit': sploit_name, 'team': item['team']}
+            for item in flags]
 
-    data = [
-        {"flag": item["flag"], "sploit": sploit_name, "team": item["team"]}
-        for item in flags
-    ]
-
-    req = Request(urljoin(args.server_url, "/api/post_flags"))
-    req.add_header("Content-Type", "application/json")
+    req = Request(urljoin(args.server_url, '/api/post_flags'))
+    req.add_header('Content-Type', 'application/json')
     if args.token is not None:
-        req.add_header("X-Token", args.token)
+        req.add_header('X-Token', args.token)
     with urlopen(req, data=json.dumps(data).encode(), timeout=SERVER_TIMEOUT) as conn:
         if conn.status != 200:
             raise APIException(conn.read())
@@ -333,7 +299,7 @@ class FlagStorage:
             for item in flags:
                 if item not in self._flags_seen:
                     self._flags_seen.add(item)
-                    self._queue.append({"flag": item, "team": team_name})
+                    self._queue.append({'flag': item, 'team': team_name})
 
     def pick_flags(self):
         with self._lock:
@@ -365,16 +331,13 @@ def run_post_loop(args):
                     post_flags(args, flags_to_post)
 
                     flag_storage.mark_as_sent(len(flags_to_post))
-                    logging.info(
-                        "{} flags posted to the server ({} in the queue)".format(
-                            len(flags_to_post), flag_storage.queue_size
-                        )
-                    )
+                    logging.info('{} flags posted to the server ({} in the queue)'.format(
+                        len(flags_to_post), flag_storage.queue_size))
                 except Exception as e:
                     logging.error("Can't post flags to the server: {}".format(repr(e)))
                     logging.info("The flags will be posted next time")
     except Exception as e:
-        logging.critical("Posting loop died: {}".format(repr(e)))
+        logging.critical('Posting loop died: {}'.format(repr(e)))
         shutdown()
 
 
@@ -383,12 +346,12 @@ display_output_lock = threading.RLock()
 
 def display_sploit_output(team_name, output_lines):
     if not output_lines:
-        logging.info("{}: No output from the sploit".format(team_name))
+        logging.info('{}: No output from the sploit'.format(team_name))
         return
 
-    prefix = highlight(team_name + ": ")
+    prefix = highlight(team_name + ': ')
     with display_output_lock:
-        print("\n" + "\n".join(prefix + line.rstrip() for line in output_lines) + "\n")
+        print('\n' + '\n'.join(prefix + line.rstrip() for line in output_lines) + '\n')
 
 
 def process_sploit_output(stream, args, team_name, flag_format, attack_no):
@@ -400,7 +363,7 @@ def process_sploit_output(stream, args, team_name, flag_format, attack_no):
             line = stream.readline()
             if not line:
                 break
-            line = line.decode(errors="replace")
+            line = line.decode(errors='replace')
             output_lines.append(line)
 
             line_flags = set(flag_format.findall(line))
@@ -413,13 +376,10 @@ def process_sploit_output(stream, args, team_name, flag_format, attack_no):
 
             display_sploit_output(team_name, output_lines)
             if instance_flags:
-                logging.info(
-                    'Got {} flags from "{}": {}'.format(
-                        len(instance_flags), team_name, instance_flags
-                    )
-                )
+                logging.info('Got {} flags from "{}": {}'.format(
+                    len(instance_flags), team_name, instance_flags))
     except Exception as e:
-        logging.error("Failed to process sploit output: {}".format(repr(e)))
+        logging.error('Failed to process sploit output: {}'.format(repr(e)))
 
 
 class InstanceStorage:
@@ -459,36 +419,28 @@ def launch_sploit(args, team_name, team_addr, attack_no, flag_format):
     # stdout and stderr after each newline. Note that this is not default behavior
     # if the sploit's output is redirected to a pipe.
     env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
+    env['PYTHONUNBUFFERED'] = '1'
 
     command = [os.path.abspath(args.sploit)]
     if args.interpreter is not None:
         command = [args.interpreter] + command
     if team_addr is not None:
         command.append(team_addr)
-    need_close_fds = not os_windows
+    need_close_fds = (not os_windows)
 
     if os_windows:
         # On Windows, we block Ctrl+C handling, spawn the process, and
         # then recover the handler. This is the only way to make Ctrl+C
         # intercepted by us instead of our child processes.
         kernel32.SetConsoleCtrlHandler(win_ignore_ctrl_c, True)
-    proc = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-        close_fds=need_close_fds,
-        env=env,
-    )
+    proc = subprocess.Popen(command,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            bufsize=1, close_fds=need_close_fds, env=env)
     if os_windows:
         kernel32.SetConsoleCtrlHandler(win_ignore_ctrl_c, False)
 
-    threading.Thread(
-        target=lambda: process_sploit_output(
-            proc.stdout, args, team_name, flag_format, attack_no
-        )
-    ).start()
+    threading.Thread(target=lambda: process_sploit_output(
+        proc.stdout, args, team_name, flag_format, attack_no)).start()
 
     return proc, instance_storage.register_start(proc)
 
@@ -499,21 +451,14 @@ def run_sploit(args, team_name, team_addr, attack_no, max_runtime, flag_format):
             if exit_event.is_set():
                 return
 
-            proc, instance_id = launch_sploit(
-                args, team_name, team_addr, attack_no, flag_format
-            )
+            proc, instance_id = launch_sploit(args, team_name, team_addr, attack_no, flag_format)
     except Exception as e:
         if isinstance(e, FileNotFoundError):
-            logging.error(
-                "Sploit file or the interpreter for it not found: {}".format(repr(e))
-            )
-            logging.error(
-                "Check presence of the sploit file and the shebang (use {} for compatibility)".format(
-                    highlight("#!/usr/bin/env ...", [Style.FG_GREEN])
-                )
-            )
+            logging.error('Sploit file or the interpreter for it not found: {}'.format(repr(e)))
+            logging.error('Check presence of the sploit file and the shebang (use {} for compatibility)'.format(
+                highlight('#!/usr/bin/env ...', [Style.FG_GREEN])))
         else:
-            logging.error("Failed to run sploit: {}".format(repr(e)))
+            logging.error('Failed to run sploit: {}'.format(repr(e)))
 
         if attack_no == 1:
             shutdown()
@@ -526,9 +471,7 @@ def run_sploit(args, team_name, team_addr, attack_no, max_runtime, flag_format):
         except subprocess.TimeoutExpired:
             need_kill = True
             if attack_no <= args.verbose_attacks:
-                logging.warning(
-                    'Sploit for "{}" ({}) ran out of time'.format(team_name, team_addr)
-                )
+                logging.warning('Sploit for "{}" ({}) ran out of time'.format(team_name, team_addr))
 
         with instance_lock:
             if need_kill:
@@ -536,34 +479,23 @@ def run_sploit(args, team_name, team_addr, attack_no, max_runtime, flag_format):
 
             instance_storage.register_stop(instance_id, need_kill)
     except Exception as e:
-        logging.error("Failed to finish sploit: {}".format(repr(e)))
+        logging.error('Failed to finish sploit: {}'.format(repr(e)))
 
 
 def show_time_limit_info(args, config, max_runtime, attack_no):
     if attack_no == 1:
-        min_attack_period = (
-            config["FLAG_LIFETIME"] - config["SUBMIT_PERIOD"] - POST_PERIOD
-        )
+        min_attack_period = config['FLAG_LIFETIME'] - config['SUBMIT_PERIOD'] - POST_PERIOD
         if args.attack_period >= min_attack_period:
-            logging.warning(
-                "--attack-period should be < {:.1f} sec, "
-                "otherwise the sploit will not have time "
-                "to catch flags for each round before their expiration".format(
-                    min_attack_period
-                )
-            )
+            logging.warning("--attack-period should be < {:.1f} sec, "
+                            "otherwise the sploit will not have time "
+                            "to catch flags for each round before their expiration".format(min_attack_period))
 
-    logging.info("Time limit for a sploit instance: {:.1f} sec".format(max_runtime))
+    logging.info('Time limit for a sploit instance: {:.1f} sec'.format(max_runtime))
     with instance_lock:
         if instance_storage.n_completed > 0:
             # TODO: Maybe better for 10 last attacks
-            logging.info(
-                "Total {:.1f}% of instances ran out of time".format(
-                    float(instance_storage.n_killed)
-                    / instance_storage.n_completed
-                    * 100
-                )
-            )
+            logging.info('Total {:.1f}% of instances ran out of time'.format(
+                float(instance_storage.n_killed) / instance_storage.n_completed * 100))
 
 
 PRINTED_TEAM_NAMES = 5
@@ -571,31 +503,22 @@ PRINTED_TEAM_NAMES = 5
 
 def get_target_teams(args, teams, attack_no):
     if args.not_per_team:
-        return {"*": None}
+        return {'*': None}
 
     if args.distribute is not None:
         k, n = args.distribute
-        teams = {
-            name: addr
-            for name, addr in teams.items()
-            if binascii.crc32(addr.encode()) % n == k - 1
-        }
+        teams = {name: addr for name, addr in teams.items()
+                 if binascii.crc32(addr.encode()) % n == k - 1}
 
     if teams:
         if attack_no <= args.verbose_attacks:
             names = sorted(teams.keys())
             if len(names) > PRINTED_TEAM_NAMES:
-                names = names[:PRINTED_TEAM_NAMES] + ["..."]
-            logging.info(
-                "Sploit will be run on {} teams: {}".format(
-                    len(teams), ", ".join(names)
-                )
-            )
+                names = names[:PRINTED_TEAM_NAMES] + ['...']
+            logging.info('Sploit will be run on {} teams: {}'.format(len(teams), ', '.join(names)))
     else:
-        logging.error(
-            'There is no teams to attack for this farm client, fix "TEAMS" value '
-            "in your server config or the usage of --distribute"
-        )
+        logging.error('There is no teams to attack for this farm client, fix "TEAMS" value '
+                      'in your server config or the usage of --distribute')
 
     return teams
 
@@ -608,7 +531,7 @@ def main(args):
         return
 
     print(highlight(HEADER))
-    logging.info("Connecting to the farm server at {}".format(args.server_url))
+    logging.info('Connecting to the farm server at {}'.format(args.server_url))
 
     threading.Thread(target=lambda: run_post_loop(args)).start()
 
@@ -617,34 +540,26 @@ def main(args):
     for attack_no in once_in_a_period(args.attack_period):
         try:
             config = get_config(args)
-            flag_format = re.compile(config["FLAG_FORMAT"])
+            flag_format = re.compile(config['FLAG_FORMAT'])
         except Exception as e:
             logging.error("Can't get config from the server: {}".format(repr(e)))
             if attack_no == 1:
                 return
-            logging.info("Using the old config")
-        teams = get_target_teams(args, config["TEAMS"], attack_no)
+            logging.info('Using the old config')
+        teams = get_target_teams(args, config['TEAMS'], attack_no)
         if not teams:
             if attack_no == 1:
                 return
             continue
 
         print()
-        logging.info("Launching an attack #{}".format(attack_no))
+        logging.info('Launching an attack #{}'.format(attack_no))
 
         max_runtime = args.attack_period / ceil(len(teams) / args.pool_size)
         show_time_limit_info(args, config, max_runtime, attack_no)
 
         for team_name, team_addr in teams.items():
-            pool.submit(
-                run_sploit,
-                args,
-                team_name,
-                team_addr,
-                attack_no,
-                max_runtime,
-                flag_format,
-            )
+            pool.submit(run_sploit, args, team_name, team_addr, attack_no, max_runtime, flag_format)
 
 
 def shutdown():
@@ -656,10 +571,10 @@ def shutdown():
             proc.kill()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         main(parse_args())
     except KeyboardInterrupt:
-        logging.info("Got Ctrl+C, shutting down")
+        logging.info('Got Ctrl+C, shutting down')
     finally:
         shutdown()
