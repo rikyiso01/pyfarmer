@@ -1,11 +1,11 @@
 from __future__ import annotations
 from argparse import ArgumentParser
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from string import printable
 from typing import Any
 from subprocess import call
 from os.path import dirname, join, basename
-from requests import get
+from httpx import get
 from random import choice
 from traceback import print_exc, print_exception as print_except
 from tempfile import NamedTemporaryFile
@@ -38,6 +38,11 @@ def farm(function: Callable[[str], Any], file: str) -> None:
 
 def submit_flag(flag: str) -> None:
     print(flag, flush=True)
+
+
+def submit_flags(flags: Iterable[str]) -> None:
+    for flag in flags:
+        submit_flag(flag)
 
 
 def get_ids(url: str, service: str) -> list[str]:
