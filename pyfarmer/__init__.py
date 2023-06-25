@@ -1,18 +1,6 @@
-from ._pyfarmer import (
-    farm,
-    submit_flag,
-    get_ids,
-    random_string,
-    print_exception,
-    ip as IP,
+from pyfarmer._entry import farm as farm
+from pyfarmer._strategies import (
+    ThreadPoolStrategy as ThreadPoolStrategy,
+    ProcessPoolStrategy as ProcessPoolStrategy,
+    SequentialStrategy as SequentialStrategy,
 )
-
-__all__ = [
-    "farm",
-    "submit_flag",
-    "get_ids",
-    "print_exception",
-    "random_string",
-    "print_exception",
-    "IP",
-]
