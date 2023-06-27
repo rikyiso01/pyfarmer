@@ -45,9 +45,7 @@ DEFAULT_POOL_SIZE = 8
 DEFAULT_VERBOSE_ATTACKS = 1
 
 
-def farm(
-    function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStrategy(None)
-):
+def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStrategy()):
     parser = ArgumentParser(description="Run a sploit on all teams in a loop")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("ip", metavar="IP", nargs="?")

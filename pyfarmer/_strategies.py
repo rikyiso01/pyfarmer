@@ -52,16 +52,16 @@ class FarmingTool(Protocol):
 
 class ProcessStrategy(FarmingStrategy):
     def __init__(
-        self, spawn_type: Literal["spawn", "fork", "forkserver"] | None = None, /
+        self, *, start_method: Literal["spawn", "fork", "forkserver"] | None = None
     ):
-        self.__context = get_context(spawn_type)
+        self.__context = get_context(start_method)
 
     def create(
-        self, function: Callable[..., None], args: tuple[object, ...]
+        self, function: Callable[..., None], args: tuple[object, ...], /
     ) -> FarmingTool:
         return self.__context.Process(target=function, args=args)
 
-    def after_start(self, connection: Connection) -> None:
+    def after_start(self, connection: Connection, /) -> None:
         connection.close()
 
     def create_communication(self) -> tuple[Connection, Connection]:
@@ -69,11 +69,11 @@ class ProcessStrategy(FarmingStrategy):
 
 
 class ThreadStrategy(FarmingStrategy):
-    def __init__(self, trace_kill: bool = True):
+    def __init__(self, *, trace_kill: bool = True):
         self.__trace_kill = trace_kill
 
     def create(
-        self, function: Callable[..., None], args: tuple[object, ...]
+        self, function: Callable[..., None], args: tuple[object, ...], /
     ) -> FarmingTool:
         method = StoppableThread if self.__trace_kill else FakeStoppableThread
         return method(target=function, args=args)
@@ -81,7 +81,7 @@ class ThreadStrategy(FarmingStrategy):
     def create_communication(self) -> tuple[Connection, Connection]:
         return Pipe(False)
 
-    def after_stop(self, connection: Connection) -> None:
+    def after_stop(self, connection: Connection, /) -> None:
         connection.close()
 
 
@@ -108,7 +108,7 @@ class StoppableThread(Thread):
             self.exitcode = 1
             raise
 
-    def __trace(self, a: FrameType, b: str, c: object) -> None:
+    def __trace(self, a: FrameType, b: str, c: object, /) -> None:
         if self.__stop:
             raise SystemExit()
 

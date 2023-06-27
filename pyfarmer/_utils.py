@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TypeVar, Type
 from typing_extensions import TypeVarTuple
 from asyncio import Queue, QueueEmpty
+from traceback import print_exception as original_print_exception, print_exc
 
 
 TT = TypeVarTuple("TT")
@@ -24,8 +25,15 @@ async def run_in_background(
         return await looper.run_in_executor(executor, function, *args)
 
 
-def random_string(length: int = 16, charset: str = printable) -> str:
+def random_string(length: int = 16, /, *, charset: str = printable) -> str:
     return "".join(choices(charset, k=length))
+
+
+def print_exception(exception: Exception | None = None, /) -> None:
+    if exception is None:
+        print_exc()
+    else:
+        original_print_exception(exception)
 
 
 async def fast_queue_read(queue: Queue[T]) -> list[T]:

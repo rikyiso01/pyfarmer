@@ -5,4 +5,7 @@ from pyfarmer._strategies import (
     FarmingStrategy as FarmingStrategy,
     FarmingTool as FarmingTool,
 )
-from pyfarmer._utils import random_string as random_string
+from pyfarmer._utils import (
+    random_string as random_string,
+    print_exception as print_exception,
+)
