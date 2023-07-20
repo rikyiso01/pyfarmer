@@ -1,39 +1,31 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
-from asyncio import Queue, run, sleep
+from asyncio import run, sleep, Task, Semaphore, CancelledError
 from collections import Counter
-from collections.abc import Callable, Generator, Iterable
-from enum import IntEnum, auto
-from multiprocessing.connection import Connection
+from collections.abc import Callable, Generator, AsyncIterable
 from os.path import basename
 from random import shuffle
 from sys import argv
 from time import time
-from traceback import print_exc
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 from urllib.parse import urljoin
+from contextlib import AbstractContextManager
+from functools import partial
+from math import ceil
 
 from httpx import AsyncClient, HTTPError
 from typing_extensions import TypeAlias
+from anyio import create_memory_object_stream
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from logging import basicConfig, INFO, getLogger
 
-from pyfarmer._strategies import FarmingStrategy, ProcessStrategy
-from pyfarmer._utils import AsyncConnection, fast_queue_read, run_in_background
+from pyfarmer._strategies import FarmingStrategy, ProcessStrategy, WriteCommunication
+from pyfarmer._utils import iterate_queue, Status, stoppable_process
+from enum import Enum
+from aiotools import TaskGroup
 
-if TYPE_CHECKING:
-    from asyncio import TaskGroup
-else:
-    from aiotools import TaskGroup
-
-SploitFunction: TypeAlias = "Callable[[str], Iterable[str] | None]"
-FlagQueue: TypeAlias = "Queue[tuple[str, str]]"
-ProducerFunction: TypeAlias = "Callable[[str], None]"
-
-
-class Status(IntEnum):
-    OK = auto()
-    TIMEOUT = auto()
-    ERROR = auto()
+SploitFunction: TypeAlias = "Callable[[str], Generator[str, None, None]]"
 
 
 class Config(TypedDict):
@@ -41,8 +33,17 @@ class Config(TypedDict):
     FLAG_LIFETIME: int
 
 
+class Mode(Enum):
+    ALL = "all"
+    SPRINT = "sprint"
+    SLOW = "slow"
+
+
 DEFAULT_POOL_SIZE = 8
 DEFAULT_VERBOSE_ATTACKS = 1
+FLAG_BUFFER_SIZE = 1024
+MAX_FLAGS_PER_PROCESS = 250
+LOGGER = getLogger("pyfarmer")
 
 
 def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStrategy()):
@@ -69,35 +70,53 @@ def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStra
         "Too little value will make time limits for sploits smaller, "
         "too big will miss flags from some rounds",
     )
-
-    # parser.add_argument(
-    #     "-v",
-    #     "--verbose-attacks",
-    #     metavar="N",
-    #     default=DEFAULT_VERBOSE_ATTACKS,
-    #     type=int,
-    #     help="Sploits' outputs and found flags will be shown for the N first attacks",
-    # )
-
-    # group = parser.add_mutually_exclusive_group()
-    # group.add_argument(
-    #     "--not-per-team",
-    #     action="store_true",
-    #     default=False,
-    #     help="Run a single instance of the sploit instead of an instance per team",
-    # )
-    # group.add_argument(
-    #     "--distribute",
-    #     nargs=2,
-    #     metavar=("K", "N"),
-    #     help="Divide the team list to N parts (by address hash modulo N) "
-    #     "and run the sploits only on Kth part of it (K >= 1)",
-    # )
+    parser.add_argument("--debug", "-d", default=False, action="store_true")
+    parser.add_argument(
+        "--mode",
+        "-m",
+        choices=[m.value for m in Mode],
+        default=Mode.ALL.value,
+    )
+    parser.add_argument("--cycles", type=int)
+    parser.add_argument("--timeout", type=float)
     args = vars(parser.parse_args())
+    args["mode"] = Mode(args["mode"])
+    if args["debug"]:
+        basicConfig(level=INFO)
+    del args["debug"]
     try:
         run(main(function, strategy, **args))
     except KeyboardInterrupt:
         pass
+
+
+async def async_farm(
+    function: SploitFunction,
+    strategy: FarmingStrategy,
+    /,
+    *,
+    server_url: str,
+    alias: str,
+    token: str | None = None,
+    pool_size: int = DEFAULT_POOL_SIZE,
+    timeout: float | None = None,
+    attack_period: float | None = None,
+    mode: Mode = Mode.ALL,
+    cycles: int | None = None,
+):
+    await main(
+        function,
+        strategy,
+        ip=None,
+        server_url=server_url,
+        alias=alias,
+        token=token,
+        pool_size=pool_size,
+        attack_period=attack_period,
+        timeout=timeout,
+        mode=mode,
+        cycles=cycles,
+    )
 
 
 async def main(
@@ -111,129 +130,211 @@ async def main(
     token: str | None,
     pool_size: int,
     attack_period: float | None,
-    # verbose_attacks: int | None,
-    # not_per_team: bool,
-    # distribute: tuple[int, int] | None,
+    timeout: float | None,
+    mode: Mode,
+    cycles: int | None = None,
 ):
     if server_url is not None:
         if "http" not in server_url:
             server_url = f"http://{server_url}"
         if alias is None:
             alias = basename(argv[0])
-        queue: FlagQueue = Queue(1024)
+        send_stream: MemoryObjectSendStream[tuple[str, str]]
+        receive_stream: MemoryObjectReceiveStream[tuple[str, str]]
+        send_stream, receive_stream = create_memory_object_stream(FLAG_BUFFER_SIZE)
         async with AsyncClient() as client:
-            config = await get_config(client, server_url, token)
+            config = await get_config(client, server_url=server_url, token=token)
             targets = [*config["TEAMS"].values()]
             shuffle(targets)
+            slots = ceil(len(targets) / pool_size)
             if attack_period is None:
                 attack_period = config["FLAG_LIFETIME"]
+                optimal_timeout = attack_period / (slots + 1)
+                attack_period -= optimal_timeout
+            if timeout is None:
+                timeout = attack_period / slots
             print("Config:")
             print("\t#targets:", len(targets))
             print("\tflag_lifetime:", attack_period)
-            print("\tsploit_timeout:", attack_period / len(targets))
+            print("\tsploit_timeout:", timeout)
             print("\talias:", alias)
-            print("\tsprint_pool_size:", pool_size)
+            print("\tpool_size:", pool_size)
             print("Starting first sprint")
             async with TaskGroup() as group:
                 group.create_task(
-                    upload_thread(client, queue, server_url, alias, token)
+                    upload_thread(
+                        client,
+                        iterate_queue(receive_stream),
+                        server_url=server_url,
+                        alias=alias,
+                        token=token,
+                    )
                 )
                 group.create_task(
                     main_loop(
                         function,
-                        queue,
+                        send_stream,
                         targets,
-                        pool_size,
-                        attack_period,
-                        strategy,
+                        pool_size=pool_size,
+                        attack_period=attack_period,
+                        timeout=timeout,
+                        strategy=strategy,
+                        mode=mode,
+                        cycles=cycles,
                     )
                 )
     else:
         assert ip is not None
-        for flag in run_sploit(function, ip):
+        for flag in function(ip):
             print(flag)
 
 
-async def get_config(client: AsyncClient, server_url: str, token: str | None) -> Config:
+async def get_config(
+    client: AsyncClient, /, *, server_url: str, token: str | None
+) -> Config:
     response = await client.get(
         urljoin(server_url, "/api/get_config"),
         headers={"X-Token": token} if token is not None else None,
     )
+    if response.status_code != 200:
+        LOGGER.error(
+            f"Farm get_config responded with non 200 status code: {response.status_code} {response.text}"
+        )
     response.raise_for_status()
     return response.json()
 
 
-async def post_flags(
+async def upload_thread(
     client: AsyncClient,
+    receive_stream: AsyncIterable[list[tuple[str, str]]],
+    /,
+    *,
     server_url: str,
     alias: str,
     token: str | None,
-    flags: list[tuple[str, str]],
 ):
+    to_submit: list[tuple[str, str]] = []
+    async for flags in receive_stream:
+        to_submit += flags
+        try:
+            await post_flags(
+                client, to_submit, server_url=server_url, alias=alias, token=token
+            )
+            to_submit = []
+        except HTTPError:
+            LOGGER.error("Error submitting flags", exc_info=True)
+
+
+async def post_flags(
+    client: AsyncClient,
+    flags: list[tuple[str, str]],
+    /,
+    *,
+    server_url: str,
+    alias: str,
+    token: str | None,
+):
+    LOGGER.info(f"Submitting {len(flags)} flags")
     data = [{"flag": flag, "sploit": alias, "team": team} for team, flag in flags]
     response = await client.post(
         urljoin(server_url, "/api/post_flags"),
         json=data,
         headers={"X-Token": token} if token is not None else None,
     )
+    if response.status_code != 200:
+        LOGGER.error(
+            f"Farm post_flags responded with non 200 status code: {response.status_code} {response.text}"
+        )
     response.raise_for_status()
-
-
-async def upload_thread(
-    client: AsyncClient,
-    queue: FlagQueue,
-    server_url: str,
-    alias: str,
-    token: str | None,
-):
-    to_submit: list[tuple[str, str]] = []
-    while True:
-        flags = await fast_queue_read(queue)
-        to_submit += flags
-        try:
-            await post_flags(client, server_url, alias, token, to_submit)
-            print(f"Posted {len(flags)} flags")
-            to_submit = []
-        except HTTPError:
-            print_exc()
 
 
 async def main_loop(
     function: SploitFunction,
-    queue: FlagQueue,
+    queue: MemoryObjectSendStream[tuple[str, str]],
     targets: list[str],
+    /,
+    *,
     pool_size: int,
     attack_period: float,
+    timeout: float,
     strategy: FarmingStrategy,
+    mode: Mode,
+    cycles: int | None = None,
 ):
-    await run_all(function, queue, targets, pool_size, attack_period, strategy)
-    print("Entering slow mode")
-    while True:
-        await slow_mode(function, queue, targets, attack_period, strategy)
+    with queue:
+        if mode != Mode.SLOW:
+            await run_all(
+                function,
+                queue,
+                targets,
+                timeout=timeout,
+                pool_size=pool_size,
+                strategy=strategy,
+            )
+        if mode == Mode.ALL:
+            print("Entering slow mode")
+        if mode != Mode.SPRINT:
+            LOGGER.info(f"Average sleep time: {attack_period / len(targets)}")
+            counter = 0
+            start_time = time()
+            while True:
+                target_time = start_time + attack_period * (counter + 1)
+                if cycles is not None and counter >= cycles:
+                    break
+                print("Starting cycle", counter + 1)
+                await slow_mode(
+                    function,
+                    queue,
+                    targets,
+                    timeout=timeout,
+                    strategy=strategy,
+                    target_time=target_time,
+                    pool_size=pool_size,
+                )
+                counter += 1
 
 
 async def slow_mode(
     function: SploitFunction,
-    queue: FlagQueue,
+    queue: MemoryObjectSendStream[tuple[str, str]],
     targets: list[str],
-    attack_period: float,
+    /,
+    *,
+    timeout: float,
     strategy: FarmingStrategy,
+    target_time: float,
+    pool_size: int,
 ) -> None:
-    counter: Counter[Status] = Counter()
-    for i, target in enumerate(targets):
-        timeout = attack_period / len(targets)
-        print(f"Starting attack {i}/{len(targets)}")
-        start = time()
-        status = await run_attack(function, queue, target, timeout, strategy)
-        counter[status] += 1
-        print(f"Attack {i}/{len(targets)} result:", status.name)
-        await sleep(timeout - (time() - start))
+    LOGGER.info(f"Time allocated for slow mode cycle: {target_time-time()}")
+    tasks: list[Task[Status]] = []
+    async with TaskGroup() as group:
+        for i, target in enumerate(targets):
+            print(f"Starting attack {i+1}/{len(targets)}")
+
+            def callback(i: int, task: Task[Status]):
+                try:
+                    print(f"Attack {i+1}/{len(targets)} result:", task.result().name)
+                except CancelledError:
+                    pass
+                except:
+                    LOGGER.warning(
+                        "Exception in print_attack_result callback", exc_info=True
+                    )
+
+            task = group.create_task(
+                run_attack(function, queue, target, timeout=timeout, strategy=strategy)
+            )
+            tasks.append(task)
+            task.add_done_callback(partial(callback, i))
+            sleep_time = (target_time - time()) / (len(targets) - i)
+            LOGGER.info(f"Entering sleep for {sleep_time} seconds")
+            await sleep(sleep_time)
     print("Slow mode cycle completed")
-    print_stats(counter)
+    print_stats(Counter([await task for task in tasks]))
 
 
 def print_stats(stats: Counter[Status]):
-    total = stats.total()
+    total = sum(stats.values())
     print("Stats:")
     print(f"\tOK: {stats[Status.OK]}/{total}")
     print(f"\tERROR: {stats[Status.ERROR]}/{total}")
@@ -242,103 +343,118 @@ def print_stats(stats: Counter[Status]):
 
 async def run_all(
     function: SploitFunction,
-    queue: FlagQueue,
+    queue: MemoryObjectSendStream[tuple[str, str]],
     targets: list[str],
+    /,
+    *,
+    timeout: float,
     pool_size: int,
-    attack_period: float,
     strategy: FarmingStrategy,
 ) -> None:
-    shared_list = [*reversed(targets)]
+    def print_remaining(task: Task[Status]):
+        try:
+            status = task.result()
+            stats[status] += 1
+            done = sum(stats.values())
+            print("Remaining targets in the sprint:", len(targets) - done)
+        except CancelledError:
+            pass
+        except:
+            LOGGER.warning("Exception in print_remaining callback", exc_info=True)
+
+    stats: Counter[Status] = Counter()
+    semaphore = Semaphore(pool_size)
     async with TaskGroup() as group:
-        tasks = [
-            group.create_task(
-                pool_tasks(
-                    function, queue, shared_list, attack_period / len(targets), strategy
+        for target in targets:
+            task = group.create_task(
+                schedule_attack(
+                    function,
+                    queue,
+                    semaphore,
+                    target,
+                    timeout=timeout,
+                    strategy=strategy,
                 )
             )
-            for _ in range(pool_size)
-        ]
-    start: Counter[Status] = Counter()
-    stats = sum([await task for task in tasks], start=start)
+            task.add_done_callback(print_remaining)
     print("Sprint completed")
     print_stats(stats)
 
 
-async def pool_tasks(
+async def schedule_attack(
     function: SploitFunction,
-    queue: FlagQueue,
-    pool: list[str],
-    attack_period: float,
+    queue: MemoryObjectSendStream[tuple[str, str]],
+    semaphore: Semaphore,
+    target: str,
+    /,
+    *,
+    timeout: float,
     strategy: FarmingStrategy,
-) -> Counter[Status]:
-    counter: Counter[Status] = Counter()
-    while pool:
-        print("Remaining targets in the sprint:", len(pool))
-        target = pool.pop()
-        status = await run_attack(function, queue, target, attack_period, strategy)
-        counter[status] += 1
-    return counter
+):
+    async with semaphore:
+        return await run_attack(
+            function, queue, target, timeout=timeout, strategy=strategy
+        )
 
 
 async def run_attack(
     function: SploitFunction,
-    queue: FlagQueue,
+    queue: MemoryObjectSendStream[tuple[str, str]],
     target: str,
-    attack_period: float,
+    /,
+    *,
+    timeout: float,
     strategy: FarmingStrategy,
 ) -> Status:
     read, write = strategy.create_communication()
     async with TaskGroup() as group:
         task = group.create_task(
-            attack_process(function, target, attack_period, strategy, write)
+            attack_process(function, write, target, timeout=timeout, strategy=strategy)
         )
-        group.create_task(read_connection(read, queue, target))
+        group.create_task(read_connection(read, queue.clone(), target))
     return await task
 
 
-async def read_connection(connection: Connection, queue: FlagQueue, target: str):
-    try:
-        with AsyncConnection(connection) as c:
-            while True:
-                data = await c.read()
-                await queue.put((target, data))
-    except EOFError:
-        pass
+async def read_connection(
+    connection: AsyncIterable[str],
+    queue: MemoryObjectSendStream[tuple[str, str]],
+    target: str,
+):
+    with queue:
+        counter = 0
+        async for data in connection:
+            if counter >= MAX_FLAGS_PER_PROCESS:
+                LOGGER.warning("Attack sent too many flags")
+                break
+            assert isinstance(data, str)
+            await queue.send((target, data))
+            counter += 1
 
 
 async def attack_process(
     function: SploitFunction,
+    write: AbstractContextManager[WriteCommunication],
     target: str,
-    attack_period: float,
+    /,
+    *,
+    timeout: float,
     strategy: FarmingStrategy,
-    write: Connection,
 ) -> Status:
-    process = strategy.create(process_main, (function, write, target))
-    process.start()
-    strategy.after_start(write)
-    await run_in_background(process.join, (attack_period,))
-    strategy.after_stop(write)
-    if process.is_alive():
-        process.kill()
-        return Status.TIMEOUT
-    assert process.exitcode is not None
-    if process.exitcode != 0:
-        return Status.ERROR
-    return Status.OK
+    with write as w:
+        base_process = strategy.create_process(process_main, (function, w, target))
+        with stoppable_process(base_process) as process:
+            return await process(timeout)
 
 
-def process_main(function: SploitFunction, connection: Connection, target: str) -> None:
+def process_main(
+    function: SploitFunction,
+    connection: WriteCommunication,
+    target: str,
+) -> None:
     try:
-        for flag in run_sploit(function, target):
+        for flag in function(target):
             connection.send(flag)
     except KeyboardInterrupt:
         pass
-
-
-def run_sploit(function: SploitFunction, target: str) -> Generator[str, None, None]:
-    result = function(target)
-    if result is None:
-        return
-    if isinstance(result, str):
-        result = [result]
-    yield from result
+    except:
+        LOGGER.error("Subprocess terminated with an error", exc_info=True)

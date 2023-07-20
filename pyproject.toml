@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "pyfarmer"
 version = "2.0.0"
-description = "A farmer for your flag farm"
+description = "A farmer for your Destructive Farm"
 authors = ["rikyiso01 <riky.isola@gmail.com>"]
 
 [tool.poetry.dependencies]
@@ -9,10 +9,14 @@ python = "^3.8"
 httpx = "^0.24.1"
 aiotools = "^1.6.1"
 typing-extensions = "^4.6.3"
+anyio = "^3.7.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.1.2"
 pwntools-stubs = "^0.1.2"
+async-timeout = "^4.0.2"
+aiohttp = "^3.8.4"
+pytest-asyncio = "^0.21.0"
 # Destructive farm
 certifi = "^2018.1.18"
 chardet = "^3.0.4"

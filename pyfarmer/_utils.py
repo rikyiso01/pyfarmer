@@ -1,17 +1,18 @@
 from __future__ import annotations
-from collections.abc import Callable
-from types import TracebackType
-from typing_extensions import TypeVarTuple, Unpack
-from multiprocessing.connection import Connection
 from string import printable
 from random import choices
-from asyncio import get_running_loop
-from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVar, Type
-from typing_extensions import TypeVarTuple
-from asyncio import Queue, QueueEmpty
-from traceback import print_exception as original_print_exception, print_exc
-
+from typing import TypeVar
+from anyio.streams.memory import MemoryObjectReceiveStream
+from anyio import WouldBlock, EndOfStream
+from anyio.to_thread import run_sync
+from collections.abc import Callable
+from typing_extensions import TypeVarTuple, Unpack
+from collections.abc import AsyncGenerator
+from multiprocessing.connection import Connection
+from logging import error
+from typing import Protocol
+from contextlib import contextmanager
+from enum import IntEnum, auto
 
 TT = TypeVarTuple("TT")
 T = TypeVar("T")
@@ -20,9 +21,7 @@ T = TypeVar("T")
 async def run_in_background(
     function: Callable[[Unpack[TT]], T], args: tuple[Unpack[TT]]
 ) -> T:
-    looper = get_running_loop()
-    with ThreadPoolExecutor(1) as executor:
-        return await looper.run_in_executor(executor, function, *args)
+    return await run_sync(function, *args, cancellable=True)
 
 
 def random_string(length: int = 16, /, *, charset: str = printable) -> str:
@@ -30,45 +29,79 @@ def random_string(length: int = 16, /, *, charset: str = printable) -> str:
 
 
 def print_exception(exception: Exception | None = None, /) -> None:
-    if exception is None:
-        print_exc()
-    else:
-        original_print_exception(exception)
+    error(str(exception), exc_info=True if exception is None else exception)
 
 
-async def fast_queue_read(queue: Queue[T]) -> list[T]:
-    result: list[T] = []
+async def iterate_queue(
+    queue: MemoryObjectReceiveStream[T],
+) -> AsyncGenerator[list[T], None]:
+    with queue:
+        try:
+            while True:
+                result: list[T] = []
+                try:
+                    while True:
+                        result.append(queue.receive_nowait())
+                except WouldBlock:
+                    pass
+                except EndOfStream:
+                    pass
+                if result:
+                    yield result
+                yield [await queue.receive()]
+        except EndOfStream:
+            pass
+
+
+async def iterate_connection(connection: Connection) -> AsyncGenerator[str, None]:
+    with connection:
+        try:
+            while True:
+                await run_in_background(connection.poll, (None,))
+                data: object = connection.recv()
+                assert isinstance(data, str)
+                yield data
+        except EOFError:
+            pass
+
+
+class Process(Protocol):
+    def join(self, timeout: float, /) -> None:
+        ...
+
+    def start(self) -> None:
+        ...
+
+    def kill(self) -> None:
+        ...
+
+    def is_alive(self) -> bool:
+        ...
+
+    @property
+    def exitcode(self) -> int | None:
+        ...
+
+
+class Status(IntEnum):
+    OK = auto()
+    TIMEOUT = auto()
+    ERROR = auto()
+
+
+@contextmanager
+def stoppable_process(process: Process):
+    async def join(timeout: float) -> Status:
+        await run_in_background(process.join, (timeout,))
+        if process.is_alive():
+            return Status.TIMEOUT
+        assert process.exitcode is not None
+        if process.exitcode != 0:
+            return Status.ERROR
+        return Status.OK
+
+    process.start()
     try:
-        while True:
-            result.append(queue.get_nowait())
-    except QueueEmpty:
-        pass
-    if result:
-        return result
-    return [await queue.get()]
-
-
-class AsyncConnection:
-    def __init__(self, c: Connection):
-        self.__connection = c
-        self.__executor: None | ThreadPoolExecutor = None
-
-    async def read(self) -> str:
-        assert self.__executor is not None
-        loop = get_running_loop()
-        await loop.run_in_executor(self.__executor, self.__connection.poll, None)
-        return self.__connection.recv()
-
-    def __enter__(self) -> AsyncConnection:
-        self.__executor = ThreadPoolExecutor(1)
-        return self
-
-    def __exit__(
-        self,
-        __exc_type: Type[BaseException] | None,
-        __exc_value: BaseException | None,
-        __traceback: TracebackType | None,
-    ) -> bool | None:
-        assert self.__executor is not None
-        self.__connection.close()
-        self.__executor.shutdown()
+        yield join
+    finally:
+        process.kill()
