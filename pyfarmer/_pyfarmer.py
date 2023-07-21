@@ -64,10 +64,17 @@ def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStra
 
     - function: The function containing the sploit to run
     - strategy: The farming strategy to use"""
-    parser = ArgumentParser(description="Run a sploit on all teams in a loop")
+    parser = ArgumentParser(
+        prog=f"python {argv[0]}",
+        description="Run a sploit on all teams in a loop",
+    )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("ip", metavar="IP", nargs="?")
-    group.add_argument("-u", "--server-url", metavar="URL", help="Server URL")
+    group.add_argument(
+        "ip", metavar="IP", nargs="?", help="IP address to test the sploit on"
+    )
+    group.add_argument(
+        "-u", "--server-url", metavar="URL", help="Destructive Farm Server URL"
+    )
     parser.add_argument("-a", "--alias", metavar="ALIAS", help="Sploit alias")
     parser.add_argument("--token", metavar="TOKEN", help="Farm authorization token")
     parser.add_argument(
@@ -87,15 +94,24 @@ def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStra
         "Too little value will make time limits for sploits smaller, "
         "too big will miss flags from some rounds",
     )
-    parser.add_argument("--debug", "-d", default=False, action="store_true")
+    parser.add_argument(
+        "--debug",
+        "-d",
+        default=False,
+        action="store_true",
+        help="Add more verbose logs",
+    )
     parser.add_argument(
         "--mode",
         "-m",
         choices=[m.value for m in Mode],
         default=Mode.ALL.value,
+        help="Skip some phases in the scheduler algorithm",
     )
-    parser.add_argument("--cycles", type=int)
-    parser.add_argument("--timeout", type=float)
+    parser.add_argument(
+        "--cycles", type=int, help="Limit the number of cycles of the slow mode"
+    )
+    parser.add_argument("--timeout", type=float, help="Manually set the sploit timeout")
     args = vars(parser.parse_args())
     args["mode"] = Mode(args["mode"])
     if args["debug"]:
