@@ -450,14 +450,9 @@ async def read_connection(
     target: str,
 ):
     with queue:
-        counter = 0
         async for data in connection:
-            if counter >= MAX_FLAGS_PER_PROCESS:
-                LOGGER.warning("Attack sent too many flags")
-                break
             assert isinstance(data, str)
             await queue.send((target, data))
-            counter += 1
 
 
 async def attack_process(
@@ -481,9 +476,14 @@ def process_main(
     target: str,
 ) -> None:
     try:
-        for flag in function(target):
+        for i, flag in enumerate(function(target)):
+            if i >= MAX_FLAGS_PER_PROCESS:
+                LOGGER.warning("Attack sent too many flags")
+                exit(1)
             connection.send(flag)
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
+    except SystemExit:
+        raise
     except:
         LOGGER.error("Subprocess terminated with an error", exc_info=True)
