@@ -20,12 +20,18 @@ from anyio import create_memory_object_stream
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from logging import basicConfig, INFO, getLogger
 
-from pyfarmer._strategies import FarmingStrategy, ProcessStrategy, WriteCommunication
-from pyfarmer._utils import iterate_queue, Status, stoppable_process
+from pyfarmer._strategies import (
+    FarmingStrategy,
+    ProcessStrategy,
+    WriteCommunication,
+    Status,
+)
+from pyfarmer._utils import iterate_queue
 from enum import Enum
 from aiotools import TaskGroup
 
 SploitFunction: TypeAlias = "Callable[[str], Generator[str, None, None]]"
+"""Type alias of a function that given an ip returns the flags"""
 
 
 class Config(TypedDict):
@@ -34,9 +40,14 @@ class Config(TypedDict):
 
 
 class Mode(Enum):
+    """Phases to use for the pyfarmer"""
+
     ALL = "all"
+    """Value to use to indicate all phases"""
     SPRINT = "sprint"
+    """First phase where all ip are attacked as fast as possible"""
     SLOW = "slow"
+    """Second phase where the attacks are cycled in the most resource efficient way"""
 
 
 DEFAULT_POOL_SIZE = 8
@@ -47,6 +58,12 @@ LOGGER = getLogger("pyfarmer")
 
 
 def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStrategy()):
+    """Starts the pyfarmer.
+    It will start an event loop.
+    If an event loop is already running in the current thread use async_farm
+
+    - function: The function containing the sploit to run
+    - strategy: The farming strategy to use"""
     parser = ArgumentParser(description="Run a sploit on all teams in a loop")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("ip", metavar="IP", nargs="?")
@@ -104,6 +121,18 @@ async def async_farm(
     mode: Mode = Mode.ALL,
     cycles: int | None = None,
 ):
+    """Start the pyfarmer using an external event loop
+
+    - function: The function containing the sploit to run
+    - strategy: The farming strategy to use
+    - server_url: The destructive farm use to use
+    - alias: The sploit alias name
+    - token: The api token to use when connecting to the destructive farm, None to not use any token
+    - pool_size: The maximum number of parallel sploit to run
+    - attack_period: How often to rerun an attack against the same ip, None to use the default
+    - timeout: The sploit timeout, None to use the default
+    - mode: Which steps to perform
+    - cycles: Number of cycles of slow mode before exiting, None for infinity"""
     await main(
         function,
         strategy,
@@ -442,7 +471,7 @@ async def attack_process(
 ) -> Status:
     with write as w:
         base_process = strategy.create_process(process_main, (function, w, target))
-        with stoppable_process(base_process) as process:
+        with base_process as process:
             return await process(timeout)
 
 

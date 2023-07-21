@@ -34,5 +34,5 @@
 > Install locally with:
 >
 > ```bash
-> pip install git+https://github.com/rikyiso01/pyfarmer.git@dev
+> pip install pyfarmer
 > ```

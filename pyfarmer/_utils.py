@@ -8,11 +8,7 @@ from anyio.to_thread import run_sync
 from collections.abc import Callable
 from typing_extensions import TypeVarTuple, Unpack
 from collections.abc import AsyncGenerator
-from multiprocessing.connection import Connection
 from logging import error
-from typing import Protocol
-from contextlib import contextmanager
-from enum import IntEnum, auto
 
 TT = TypeVarTuple("TT")
 T = TypeVar("T")
@@ -25,10 +21,20 @@ async def run_in_background(
 
 
 def random_string(length: int = 16, /, *, charset: str = printable) -> str:
+    """Generates a random string
+
+    - length: The length of the random string
+    - charset: The characters to choose from
+
+    - returns: The random string"""
     return "".join(choices(charset, k=length))
 
 
 def print_exception(exception: Exception | None = None, /) -> None:
+    """Print an exception with its traceback
+
+    - exception: The exception to print or None if the exception should be the latest thrown
+    """
     error(str(exception), exc_info=True if exception is None else exception)
 
 
@@ -51,57 +57,3 @@ async def iterate_queue(
                 yield [await queue.receive()]
         except EndOfStream:
             pass
-
-
-async def iterate_connection(connection: Connection) -> AsyncGenerator[str, None]:
-    with connection:
-        try:
-            while True:
-                await run_in_background(connection.poll, (None,))
-                data: object = connection.recv()
-                assert isinstance(data, str)
-                yield data
-        except EOFError:
-            pass
-
-
-class Process(Protocol):
-    def join(self, timeout: float, /) -> None:
-        ...
-
-    def start(self) -> None:
-        ...
-
-    def kill(self) -> None:
-        ...
-
-    def is_alive(self) -> bool:
-        ...
-
-    @property
-    def exitcode(self) -> int | None:
-        ...
-
-
-class Status(IntEnum):
-    OK = auto()
-    TIMEOUT = auto()
-    ERROR = auto()
-
-
-@contextmanager
-def stoppable_process(process: Process):
-    async def join(timeout: float) -> Status:
-        await run_in_background(process.join, (timeout,))
-        if process.is_alive():
-            return Status.TIMEOUT
-        assert process.exitcode is not None
-        if process.exitcode != 0:
-            return Status.ERROR
-        return Status.OK
-
-    process.start()
-    try:
-        yield join
-    finally:
-        process.kill()
