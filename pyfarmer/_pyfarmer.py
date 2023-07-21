@@ -483,7 +483,7 @@ def process_main(
     try:
         for flag in function(target):
             connection.send(flag)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     except:
         LOGGER.error("Subprocess terminated with an error", exc_info=True)
