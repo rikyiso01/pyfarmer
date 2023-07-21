@@ -33,6 +33,8 @@ TEST_SLOW_SLEEP = 0.01
 SLOW_TOLERANCE = 0.3
 TEST_SLOW_TOLERANCE = TEST_SLOW_SLEEP * SLOW_TOLERANCE
 
+STRESS_TEST_TIMEOUT = 0.001
+
 
 class SentFlag(TypedDict):
     flag: str
@@ -207,7 +209,7 @@ async def test_sprint_stress():
         while True:
             yield ip
 
-    actual = await run_sprint(sploit, TARGETS, POOL_SIZE, 0)
+    actual = await run_sprint(sploit, TARGETS, POOL_SIZE, STRESS_TEST_TIMEOUT)
     for i in range(TARGETS):
         assert Flag(sploit="test", team=str(i), flag=str(i)) in actual
 
