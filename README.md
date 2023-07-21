@@ -5,6 +5,8 @@
 > A farmer for your [Destructive Farm](https://github.com/DestructiveVoice/DestructiveFarm)
 >
 > <img src="https://i.kym-cdn.com/entries/icons/original/000/028/021/work.jpg" style="zoom: 50%;" />
+>
+> You can read the documentation at [rikyiso01.github.io/pyfarmer](https://rikyiso01.github.io/pyfarmer)
 
 ## Code Samples
 
