@@ -11,7 +11,9 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from enum import IntEnum, auto
 from pyfarmer._utils import run_in_background
+from logging import getLogger
 
+LOGGER = getLogger("pyfarmer.strategies")
 
 TT = TypeVarTuple("TT")
 T = TypeVar("T")
@@ -238,7 +240,8 @@ class FakeStoppableThread(Thread):
         return 0
 
     def kill(self):
-        pass
+        if self.is_alive():
+            LOGGER.warning("Cannot kill a running thread, a new zombie is born")
 
 
 class StoppableThread(Thread):
@@ -260,4 +263,8 @@ class StoppableThread(Thread):
             raise SystemExit()
 
     def kill(self):
+        if self.is_alive():
+            LOGGER.warning(
+                "Trying to kill a running thread, a new zombie might be born"
+            )
         self.__stop = True

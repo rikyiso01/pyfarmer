@@ -32,6 +32,7 @@ POOL_SIZE = 10
 TEST_SLOW_SLEEP = 0.01
 SLOW_TOLERANCE = 0.3
 TEST_SLOW_TOLERANCE = TEST_SLOW_SLEEP * SLOW_TOLERANCE
+PORT = 5005
 
 
 class SentFlag(TypedDict):
@@ -76,7 +77,7 @@ async def start_farm(
     await async_farm(
         function,
         strategy,
-        server_url="127.0.0.1:5000",
+        server_url=f"127.0.0.1:{PORT}",
         alias=ALIAS,
         pool_size=pool_size,
         mode=mode,
@@ -94,7 +95,7 @@ async def server(config: Config):
         ),
     )
     await runner.setup()
-    site = TCPSite(runner, "127.0.0.1", 5000)
+    site = TCPSite(runner, "127.0.0.1", PORT)
     await site.start()
     try:
         yield flags

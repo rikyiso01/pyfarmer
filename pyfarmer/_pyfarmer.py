@@ -8,7 +8,7 @@ from os.path import basename
 from random import shuffle
 from sys import argv
 from time import time
-from typing import TypedDict
+from typing import TypedDict, cast
 from urllib.parse import urljoin
 from contextlib import AbstractContextManager
 from functools import partial
@@ -30,6 +30,7 @@ from pyfarmer._utils import iterate_queue
 from enum import Enum
 from aiotools import TaskGroup
 
+RealSploitFunction: TypeAlias = "Callable[[str], object]"
 SploitFunction: TypeAlias = "Callable[[str], Generator[str, None, None]]"
 """Type alias of a function that given an ip returns the flags"""
 
@@ -116,6 +117,8 @@ def farm(function: SploitFunction, /, *, strategy: FarmingStrategy = ProcessStra
     args["mode"] = Mode(args["mode"])
     if args["debug"]:
         basicConfig(level=INFO)
+    else:
+        basicConfig()
     del args["debug"]
     try:
         run(main(function, strategy, **args))
@@ -165,7 +168,7 @@ async def async_farm(
 
 
 async def main(
-    function: SploitFunction,
+    function: RealSploitFunction,
     strategy: FarmingStrategy,
     /,
     *,
@@ -230,7 +233,7 @@ async def main(
                 )
     else:
         assert ip is not None
-        for flag in function(ip):
+        for flag in check_sploit(function(ip)):
             print(flag)
 
 
@@ -294,7 +297,7 @@ async def post_flags(
 
 
 async def main_loop(
-    function: SploitFunction,
+    function: RealSploitFunction,
     queue: MemoryObjectSendStream[tuple[str, str]],
     targets: list[str],
     /,
@@ -334,13 +337,12 @@ async def main_loop(
                     timeout=timeout,
                     strategy=strategy,
                     target_time=target_time,
-                    pool_size=pool_size,
                 )
                 counter += 1
 
 
 async def slow_mode(
-    function: SploitFunction,
+    function: RealSploitFunction,
     queue: MemoryObjectSendStream[tuple[str, str]],
     targets: list[str],
     /,
@@ -348,17 +350,20 @@ async def slow_mode(
     timeout: float,
     strategy: FarmingStrategy,
     target_time: float,
-    pool_size: int,
 ) -> None:
     LOGGER.info(f"Time allocated for slow mode cycle: {target_time-time()}")
-    tasks: list[Task[Status]] = []
+    counter: Counter[Status] = Counter()
     async with TaskGroup() as group:
         for i, target in enumerate(targets):
             print(f"Starting attack {i+1}/{len(targets)}")
 
-            def callback(i: int, task: Task[Status]):
+            def callback(i: int, task: Task[tuple[Status, int]]):
                 try:
-                    print(f"Attack {i+1}/{len(targets)} result:", task.result().name)
+                    status, count = task.result()
+                    print(
+                        f"Attack {i+1}/{len(targets)} result: {status.name}, submitted {count} flags"
+                    )
+                    counter[status] += 1
                 except CancelledError:
                     pass
                 except:
@@ -369,13 +374,12 @@ async def slow_mode(
             task = group.create_task(
                 run_attack(function, queue, target, timeout=timeout, strategy=strategy)
             )
-            tasks.append(task)
             task.add_done_callback(partial(callback, i))
             sleep_time = (target_time - time()) / (len(targets) - i)
             LOGGER.info(f"Entering sleep for {sleep_time} seconds")
             await sleep(sleep_time)
     print("Slow mode cycle completed")
-    print_stats(Counter([await task for task in tasks]))
+    print_stats(counter)
 
 
 def print_stats(stats: Counter[Status]):
@@ -387,7 +391,7 @@ def print_stats(stats: Counter[Status]):
 
 
 async def run_all(
-    function: SploitFunction,
+    function: RealSploitFunction,
     queue: MemoryObjectSendStream[tuple[str, str]],
     targets: list[str],
     /,
@@ -396,12 +400,15 @@ async def run_all(
     pool_size: int,
     strategy: FarmingStrategy,
 ) -> None:
-    def print_remaining(task: Task[Status]):
+    def print_remaining(task: Task[tuple[Status, int]]):
         try:
-            status = task.result()
+            status, count = task.result()
             stats[status] += 1
             done = sum(stats.values())
-            print("Remaining targets in the sprint:", len(targets) - done)
+            print(
+                f"Submitted {count} flags, remaining targets in the sprint:",
+                len(targets) - done,
+            )
         except CancelledError:
             pass
         except:
@@ -422,12 +429,12 @@ async def run_all(
                 )
             )
             task.add_done_callback(print_remaining)
-    print("Sprint completed")
+    print(f"Sprint completed")
     print_stats(stats)
 
 
 async def schedule_attack(
-    function: SploitFunction,
+    function: RealSploitFunction,
     queue: MemoryObjectSendStream[tuple[str, str]],
     semaphore: Semaphore,
     target: str,
@@ -443,36 +450,39 @@ async def schedule_attack(
 
 
 async def run_attack(
-    function: SploitFunction,
+    function: RealSploitFunction,
     queue: MemoryObjectSendStream[tuple[str, str]],
     target: str,
     /,
     *,
     timeout: float,
     strategy: FarmingStrategy,
-) -> Status:
+) -> tuple[Status, int]:
     read, write = strategy.create_communication()
     async with TaskGroup() as group:
-        task = group.create_task(
+        status = group.create_task(
             attack_process(function, write, target, timeout=timeout, strategy=strategy)
         )
-        group.create_task(read_connection(read, queue.clone(), target))
-    return await task
+        count = group.create_task(read_connection(read, queue.clone(), target))
+    return await status, await count
 
 
 async def read_connection(
     connection: AsyncIterable[str],
     queue: MemoryObjectSendStream[tuple[str, str]],
     target: str,
-):
+) -> int:
     with queue:
+        counter = 0
         async for data in connection:
             assert isinstance(data, str)
             await queue.send((target, data))
+            counter += 1
+        return counter
 
 
 async def attack_process(
-    function: SploitFunction,
+    function: RealSploitFunction,
     write: AbstractContextManager[WriteCommunication],
     target: str,
     /,
@@ -487,19 +497,34 @@ async def attack_process(
 
 
 def process_main(
-    function: SploitFunction,
+    function: RealSploitFunction,
     connection: WriteCommunication,
     target: str,
 ) -> None:
     try:
-        for i, flag in enumerate(function(target)):
+        for i, flag in enumerate(check_sploit(function(target))):
             if i >= MAX_FLAGS_PER_PROCESS:
-                LOGGER.warning("Attack sent too many flags")
+                LOGGER.error("Attack sent too many flags")
                 exit(1)
             connection.send(flag)
     except KeyboardInterrupt:
         pass
-    except SystemExit:
-        raise
+    except SystemExit as e:
+        exit(e.code)
     except:
         LOGGER.error("Subprocess terminated with an error", exc_info=True)
+        exit(1)
+
+
+def check_sploit(iterator: object) -> Generator[str, None, None]:
+    if not isinstance(iterator, Generator):
+        LOGGER.error(
+            "The sploit doesn't have any yield, you must use the yield keyword to submit flags"
+        )
+        exit(1)
+    iterator = cast(Generator[object, object, object], iterator)
+    for flag in iterator:
+        if not isinstance(flag, str):
+            LOGGER.error(f"The flag must be a str, found {type(flag)}")
+            exit(1)
+        yield flag

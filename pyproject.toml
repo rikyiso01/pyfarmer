@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pyfarmer"
-version = "2.0.0"
+version = "2.0.1"
 description = "A farmer for your Destructive Farm"
 authors = ["rikyiso01 <riky.isola@gmail.com>"]
 license = "MIT"
