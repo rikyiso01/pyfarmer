@@ -522,7 +522,7 @@ def check_sploit(iterator: object) -> Generator[str, None, None]:
             "The sploit doesn't have any yield, you must use the yield keyword to submit flags"
         )
         exit(1)
-    iterator = cast(Generator[object, object, object], iterator)
+    iterator = cast("Generator[object, object, object]", iterator)
     for flag in iterator:
         if not isinstance(flag, str):
             LOGGER.error(f"The flag must be a str, found {type(flag)}")
